@@ -1,0 +1,12 @@
+# Credentials -- never commit these
+*.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Trading state, logs, and history
+orb_state/
+
+# macOS
+.DS_Store
