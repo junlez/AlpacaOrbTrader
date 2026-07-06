@@ -87,7 +87,7 @@ def bars_between(bars, start_dt, end_dt):
     return out
 
 
-def simulate_day(symbol, day, calendar_day, bars_15m, bars_entry, bars_1m):
+def simulate_day(symbol, day, calendar_day, bars_15m, bars_entry, bars_1m, entry_field="c"):
     date_str = day
     open_dt = datetime.strptime(f"{date_str} {calendar_day['open']}", "%Y-%m-%d %H:%M").replace(tzinfo=ET)
     close_dt = datetime.strptime(f"{date_str} {calendar_day['close']}", "%Y-%m-%d %H:%M").replace(tzinfo=ET)
@@ -104,12 +104,12 @@ def simulate_day(symbol, day, calendar_day, bars_15m, bars_entry, bars_1m):
 
     entry = None
     for t, b in entry_candles:
-        close_price = b["c"]
-        if close_price > range_high:
-            entry = {"time": t, "price": close_price, "side": "long"}
+        signal_price = b[entry_field]
+        if signal_price > range_high:
+            entry = {"time": t, "price": signal_price, "side": "long"}
             break
-        elif close_price < range_low:
-            entry = {"time": t, "price": close_price, "side": "short"}
+        elif signal_price < range_low:
+            entry = {"time": t, "price": signal_price, "side": "short"}
             break
 
     if entry is None:
@@ -172,6 +172,8 @@ def main():
     parser.add_argument("--end", type=str, default=None, help="YYYY-MM-DD")
     parser.add_argument("--entry-timeframe", choices=["5Min", "1Min"], default="5Min",
                          help="candle resolution used for the entry/breakout signal")
+    parser.add_argument("--entry-field", choices=["vw", "c"], default="vw",
+                         help="bar field used for breakout signal: 'vw' (VWAP, default) or 'c' (close)")
     args = parser.parse_args()
     symbol = args.symbol.upper()
 
@@ -211,7 +213,7 @@ def main():
 
     results = []
     for date_str in sorted(trading_days):
-        res = simulate_day(symbol, date_str, trading_days[date_str], bars_15m, bars_entry, bars_1m)
+        res = simulate_day(symbol, date_str, trading_days[date_str], bars_15m, bars_entry, bars_1m, entry_field=args.entry_field)
         results.append(res)
 
     print(f"{'Date':<12}{'Side':<7}{'Entry':<10}{'Exit':<10}{'Reason':<8}{'PnL':>10}{'PnL%':>9}")

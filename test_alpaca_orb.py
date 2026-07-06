@@ -114,8 +114,8 @@ run_case(
     [
         ("GET", "/v2/clock", {"timestamp": "2026-06-24T09:50:00-04:00", "is_open": True}),
         ("GET", "/v2/calendar", [{"date": "2026-06-24", "open": "09:30", "close": "16:00"}]),
-        ("GET", "timeframe=15Min", {"bars": [{"h": 105.0, "l": 95.0, "c": 100.0, "t": "2026-06-24T13:30:00Z"}]}),
-        ("GET", "timeframe=5Min", {"bars": [{"h": 102.0, "l": 98.0, "c": 100.0, "t": "2026-06-24T13:45:00Z"}]}),
+        ("GET", "timeframe=15Min", {"bars": [{"h": 105.0, "l": 95.0, "c": 100.0, "vw": 100.0, "t": "2026-06-24T13:30:00Z"}]}),
+        ("GET", "timeframe=5Min", {"bars": [{"h": 102.0, "l": 98.0, "c": 100.0, "vw": 100.0, "t": "2026-06-24T13:45:00Z"}]}),
     ],
     ["TEST", "1", "--env-file", str(TEST_ENV)],
 )
@@ -132,7 +132,7 @@ run_case(
     [
         ("GET", "/v2/clock", {"timestamp": "2026-06-24T09:55:00-04:00", "is_open": True}),
         ("GET", "/v2/calendar", [{"date": "2026-06-24", "open": "09:30", "close": "16:00"}]),
-        ("GET", "/v2/stocks/TEST/bars", {"bars": [{"h": 110.0, "l": 108.0, "c": 109.0, "t": "2026-06-24T13:50:00Z"}]}),
+        ("GET", "/v2/stocks/TEST/bars", {"bars": [{"h": 110.0, "l": 108.0, "c": 109.0, "vw": 109.0, "t": "2026-06-24T13:50:00Z"}]}),
         ("POST", "/v2/orders", {"id": "order-123", "status": "accepted"}),
     ],
     ["TEST", "3", "--env-file", str(TEST_ENV)],
@@ -185,8 +185,8 @@ run_case(
     [
         ("GET", "/v2/clock", {"timestamp": "2026-06-24T09:50:00-04:00", "is_open": True}),
         ("GET", "/v2/calendar", [{"date": "2026-06-24", "open": "09:30", "close": "16:00"}]),
-        ("GET", "timeframe=15Min", {"bars": [{"h": 100.0, "l": 100.0, "c": 100.0, "t": "2026-06-24T13:30:00Z"}]}),
-        ("GET", "timeframe=5Min", {"bars": [{"h": 100.0, "l": 100.0, "c": 100.0, "t": "2026-06-24T13:45:00Z"}]}),
+        ("GET", "timeframe=15Min", {"bars": [{"h": 100.0, "l": 100.0, "c": 100.0, "vw": 100.0, "t": "2026-06-24T13:30:00Z"}]}),
+        ("GET", "timeframe=5Min", {"bars": [{"h": 100.0, "l": 100.0, "c": 100.0, "vw": 100.0, "t": "2026-06-24T13:45:00Z"}]}),
     ],
     ["TEST", "1", "--env-file", str(TEST_ENV)],
 )
@@ -245,7 +245,7 @@ run_case(
     [
         ("GET", "/v2/clock", {"timestamp": "2026-06-24T09:55:00-04:00", "is_open": True}),
         ("GET", "/v2/calendar", [{"date": "2026-06-24", "open": "09:30", "close": "16:00"}]),
-        ("GET", "/v2/stocks/TEST/bars", {"bars": [{"h": 92.0, "l": 90.0, "c": 91.0, "t": "2026-06-24T13:50:00Z"}]}),
+        ("GET", "/v2/stocks/TEST/bars", {"bars": [{"h": 92.0, "l": 90.0, "c": 91.0, "vw": 91.0, "t": "2026-06-24T13:50:00Z"}]}),
         ("POST", "/v2/orders", orb.urllib.error.HTTPError("url", 403, "Forbidden", {}, io.BytesIO(b'{"message":"asset not shortable"}'))),
     ],
     ["TEST", "3", "--env-file", str(TEST_ENV)],
@@ -264,7 +264,7 @@ run_case(
     [
         ("GET", "/v2/clock", {"timestamp": "2026-06-24T09:55:00-04:00", "is_open": True}),
         ("GET", "/v2/calendar", [{"date": "2026-06-24", "open": "09:30", "close": "16:00"}]),
-        ("GET", "/v2/stocks/TEST/bars", {"bars": [{"h": 92.0, "l": 90.0, "c": 91.0, "t": "2026-06-24T13:50:00Z"}]}),
+        ("GET", "/v2/stocks/TEST/bars", {"bars": [{"h": 92.0, "l": 90.0, "c": 91.0, "vw": 91.0, "t": "2026-06-24T13:50:00Z"}]}),
         ("POST", "/v2/orders", {"id": "short-order-1", "status": "accepted"}),
     ],
     ["TEST", "3", "--env-file", str(TEST_ENV)],
@@ -274,8 +274,8 @@ print("Saved state after short entry:", short_entry_state)
 # stop should be the range high (105.0), target should be below entry (1.5R to the downside)
 assert short_entry_state["side"] == "short"
 assert short_entry_state["stop_price"] == 105.0
-assert short_entry_state["entry_price"] == 91.0
-expected_target = 91.0 - 1.5 * (105.0 - 91.0)
+assert short_entry_state["entry_price"] == 91.0  # vw of the breakout bar
+expected_target = 91.0 - 1.5 * (105.0 - 91.0)   # 1.5R below vw entry
 assert abs(short_entry_state["target_price"] - expected_target) < 1e-9, short_entry_state["target_price"]
 assert short_entry_state["qty"] == 3
 
@@ -346,7 +346,7 @@ requests = run_case(
         ("GET", "/v2/clock", {"timestamp": "2026-06-24T09:52:30-04:00", "is_open": True}),
         ("GET", "/v2/calendar", [{"date": "2026-06-24", "open": "09:30", "close": "16:00"}]),
         # Only the fully-closed 09:45-09:50 candle should ever be requested/used.
-        ("GET", "/v2/stocks/TEST/bars", {"bars": [{"h": 100.0, "l": 98.0, "c": 99.0, "t": "2026-06-24T13:45:00Z"}]}),
+        ("GET", "/v2/stocks/TEST/bars", {"bars": [{"h": 100.0, "l": 98.0, "c": 99.0, "vw": 99.0, "t": "2026-06-24T13:45:00Z"}]}),
     ],
     ["TEST", "3", "--env-file", str(TEST_ENV)],
 )

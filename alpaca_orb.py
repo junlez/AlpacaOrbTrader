@@ -181,9 +181,12 @@ def main():
                          help=f"shares to trade per day (default: {DEFAULT_TRADE_QTY})")
     parser.add_argument("--env-file", type=Path, default=SCRIPT_DIR / "alpaca_PAPER.env",
                          help="path to the Alpaca credentials env file (default: alpaca_PAPER.env next to this script)")
+    parser.add_argument("--entry-field", choices=["vw", "c"], default="vw",
+                         help="bar field used for breakout signal: 'vw' (VWAP, default) or 'c' (close)")
     args = parser.parse_args()
     symbol = args.symbol.upper()
     trade_qty = args.qty
+    entry_field = args.entry_field
     setup_logging(symbol)
 
     env = load_env(args.env_file)
@@ -349,17 +352,17 @@ def main():
         )
         return
 
-    close_price = latest["c"]
+    signal_price = latest[entry_field]
     range_high = state["range_high"]
     range_low = state["range_low"]
 
-    if close_price > range_high:
+    if signal_price > range_high:
         side = "long"
-    elif close_price < range_low:
+    elif signal_price < range_low:
         side = "short"
     else:
         logging.info(
-            f"[{symbol}] [{now.isoformat()}] No breakout yet (close={close_price}, range=[{range_low}, {range_high}], "
+            f"[{symbol}] [{now.isoformat()}] No breakout yet ({entry_field}={signal_price}, range=[{range_low}, {range_high}], "
             f"bar timestamp={latest['t']})."
         )
         return
@@ -367,8 +370,8 @@ def main():
     try:
         if side == "long":
             stop_price = range_low
-            risk = close_price - stop_price
-            target_price = close_price + TARGET_R * risk
+            risk = signal_price - stop_price
+            target_price = signal_price + TARGET_R * risk
             order = submit_order(
                 trade_base, headers,
                 symbol=symbol, side="buy", type="market",
@@ -376,8 +379,8 @@ def main():
             )
         else:
             stop_price = range_high
-            risk = stop_price - close_price
-            target_price = close_price - TARGET_R * risk
+            risk = stop_price - signal_price
+            target_price = signal_price - TARGET_R * risk
             order = submit_order(
                 trade_base, headers,
                 symbol=symbol, side="sell", type="market",
@@ -390,7 +393,7 @@ def main():
     state["entered"] = True
     state["side"] = side
     state["qty"] = trade_qty
-    state["entry_price"] = close_price
+    state["entry_price"] = signal_price
     state["entry_time"] = now.isoformat()
     state["entry_bar_timestamp"] = latest["t"]
     state["stop_price"] = stop_price
@@ -398,7 +401,7 @@ def main():
     state["order_id"] = order.get("id")
     save_state(symbol, date_str, state)
     logging.info(
-        f"[{symbol}] [{now.isoformat()}] Entered {side} @ ~{close_price}. stop={stop_price} target={target_price} "
+        f"[{symbol}] [{now.isoformat()}] Entered {side} @ ~{signal_price} ({entry_field}). stop={stop_price} target={target_price} "
         f"(risk={risk:.4f}, R={TARGET_R}). order_id={order.get('id')} (bar timestamp={latest['t']})"
     )
 
