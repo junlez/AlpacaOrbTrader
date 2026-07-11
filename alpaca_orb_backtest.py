@@ -87,7 +87,7 @@ def bars_between(bars, start_dt, end_dt):
     return out
 
 
-def simulate_day(symbol, day, calendar_day, bars_15m, bars_entry, bars_1m, entry_field="c"):
+def simulate_day(symbol, day, calendar_day, bars_15m, bars_entry, bars_1m, entry_field="vw", exit_mode="prev-hl"):
     date_str = day
     open_dt = datetime.strptime(f"{date_str} {calendar_day['open']}", "%Y-%m-%d %H:%M").replace(tzinfo=ET)
     close_dt = datetime.strptime(f"{date_str} {calendar_day['close']}", "%Y-%m-%d %H:%M").replace(tzinfo=ET)
@@ -137,29 +137,51 @@ def simulate_day(symbol, day, calendar_day, bars_15m, bars_entry, bars_1m, entry
 
     one_min = bars_between(bars_1m, fill_time, close_dt.astimezone(timezone.utc))
 
-    # Simulate the live script's once-per-minute polling: detect stop/target using
-    # each bar's close (matching current_price at the end of that minute), then fill
-    # at the open of the next bar (matching a market order submitted that instant).
     exit_price = None
     exit_reason = None
     exit_time = None
-    pending = None  # (reason, t) detected at bar close, fill next bar's open
-    for i, (t, b) in enumerate(one_min):
-        if pending is not None:
-            exit_price, exit_reason, exit_time = b["o"], pending[0], pending[1]
-            break
-        close = b["c"]
-        hit_stop = (side == "long" and close <= stop_price) or (side == "short" and close >= stop_price)
-        hit_target = (side == "long" and close >= target_price) or (side == "short" and close <= target_price)
-        if hit_stop:
-            pending = ("stop", t)
-        elif hit_target:
-            pending = ("target", t)
-        elif t >= exit_cutoff_dt.astimezone(timezone.utc) - timedelta(minutes=1):
-            # The bar ending just before 3:50pm is the last one the live script
-            # sees before deciding to exit. Queue a time exit so the next bar's
-            # open (the 3:50pm bar open) is used as the fill price.
-            pending = ("time", t)
+
+    if exit_mode == "prev-hl":
+        # Experimental: at minute x, check the previous bar's high/low for
+        # stop/target detection, then fill at the current bar's open.
+        for i, (t, b) in enumerate(one_min):
+            if i == 0:
+                # No previous bar yet; only check time exit at cutoff.
+                if t >= exit_cutoff_dt.astimezone(timezone.utc):
+                    exit_price, exit_reason, exit_time = b["o"], "time", t
+                continue
+            prev_b = one_min[i - 1][1]
+            hit_stop = (side == "long" and prev_b["l"] <= stop_price) or (side == "short" and prev_b["h"] >= stop_price)
+            hit_target = (side == "long" and prev_b["h"] >= target_price) or (side == "short" and prev_b["l"] <= target_price)
+            if hit_stop:
+                exit_price, exit_reason, exit_time = b["o"], "stop", t
+                break
+            elif hit_target:
+                exit_price, exit_reason, exit_time = b["o"], "target", t
+                break
+            elif t >= exit_cutoff_dt.astimezone(timezone.utc):
+                exit_price, exit_reason, exit_time = b["o"], "time", t
+                break
+    else:
+        # Default: simulate the live script's once-per-minute polling using each
+        # bar's close for detection, filling at the next bar's open.
+        pending = None  # (reason, t) detected at bar close, fill next bar's open
+        for i, (t, b) in enumerate(one_min):
+            if pending is not None:
+                exit_price, exit_reason, exit_time = b["o"], pending[0], pending[1]
+                break
+            close = b["c"]
+            hit_stop = (side == "long" and close <= stop_price) or (side == "short" and close >= stop_price)
+            hit_target = (side == "long" and close >= target_price) or (side == "short" and close <= target_price)
+            if hit_stop:
+                pending = ("stop", t)
+            elif hit_target:
+                pending = ("target", t)
+            elif t >= exit_cutoff_dt.astimezone(timezone.utc) - timedelta(minutes=1):
+                # The bar ending just before 3:50pm is the last one the live script
+                # sees before deciding to exit. Queue a time exit so the next bar's
+                # open (the 3:50pm bar open) is used as the fill price.
+                pending = ("time", t)
 
     if exit_price is None:
         last_t, last_b = one_min[-1] if one_min else (fill_time, {"c": entry_price})
@@ -187,6 +209,8 @@ def main():
                          help="candle resolution used for the entry/breakout signal")
     parser.add_argument("--entry-field", choices=["vw", "c"], default="vw",
                          help="bar field used for breakout signal: 'vw' (VWAP, default) or 'c' (close)")
+    parser.add_argument("--exit-mode", choices=["prev-hl", "close"], default="prev-hl",
+                         help="exit detection: 'prev-hl' (previous bar high/low, default) or 'close' (current bar close)")
     args = parser.parse_args()
     symbol = args.symbol.upper()
 
@@ -226,7 +250,7 @@ def main():
 
     results = []
     for date_str in sorted(trading_days):
-        res = simulate_day(symbol, date_str, trading_days[date_str], bars_15m, bars_entry, bars_1m, entry_field=args.entry_field)
+        res = simulate_day(symbol, date_str, trading_days[date_str], bars_15m, bars_entry, bars_1m, entry_field=args.entry_field, exit_mode=args.exit_mode)
         results.append(res)
 
     print(f"{'Date':<12}{'Side':<7}{'Entry':<10}{'Exit':<10}{'Reason':<8}{'PnL':>10}{'PnL%':>9}")

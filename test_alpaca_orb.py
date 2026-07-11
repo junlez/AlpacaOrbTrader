@@ -153,6 +153,8 @@ run_case(
         ("GET", "/v2/clock", {"timestamp": "2026-06-24T10:30:00-04:00", "is_open": True}),
         ("GET", "/v2/calendar", [{"date": "2026-06-24", "open": "09:30", "close": "16:00"}]),
         ("GET", "/v2/positions/TEST", {"current_price": "90.0", "qty": "3"}),
+        # prev-hl: 10:29am ET bar, low=90.0 <= stop 95.0 → stop hit
+        ("GET", "timeframe=1Min", {"bars": [{"h": 96.0, "l": 90.0, "c": 90.5, "t": "2026-06-24T14:29:00Z"}]}),
         ("POST", "/v2/orders", {"id": "exit-order", "status": "accepted"}),
     ],
     ["TEST", "3", "--env-file", str(TEST_ENV)],
@@ -207,6 +209,8 @@ run_case(
         ("GET", "/v2/clock", {"timestamp": "2026-06-24T11:00:00-04:00", "is_open": True}),
         ("GET", "/v2/calendar", [{"date": "2026-06-24", "open": "09:30", "close": "16:00"}]),
         ("GET", "/v2/positions/TEST", {"current_price": "131.0", "qty": "3"}),
+        # prev-hl: 10:59am ET bar, high=131.0 >= target 130.0 → target hit
+        ("GET", "timeframe=1Min", {"bars": [{"h": 131.0, "l": 129.0, "c": 130.5, "t": "2026-06-24T14:59:00Z"}]}),
         ("POST", "/v2/orders", {"id": "exit-order", "status": "accepted"}),
     ],
     ["TEST", "3", "--env-file", str(TEST_ENV)],
@@ -227,6 +231,8 @@ run_case(
         ("GET", "/v2/clock", {"timestamp": "2026-06-24T15:50:00-04:00", "is_open": True}),
         ("GET", "/v2/calendar", [{"date": "2026-06-24", "open": "09:30", "close": "16:00"}]),
         ("GET", "/v2/positions/TEST", {"current_price": "112.0", "qty": "3"}),
+        # prev-hl: 3:49pm ET bar, price between stop/target → no stop/target hit, time exit triggers
+        ("GET", "timeframe=1Min", {"bars": [{"h": 113.0, "l": 111.0, "c": 112.0, "t": "2026-06-24T19:49:00Z"}]}),
         ("POST", "/v2/orders", {"id": "exit-order", "status": "accepted"}),
     ],
     ["TEST", "3", "--env-file", str(TEST_ENV)],
@@ -293,6 +299,8 @@ requests = run_case(
         ("GET", "/v2/clock", {"timestamp": "2026-06-24T10:30:00-04:00", "is_open": True}),
         ("GET", "/v2/calendar", [{"date": "2026-06-24", "open": "09:30", "close": "16:00"}]),
         ("GET", "/v2/positions/TEST", {"current_price": "106.0", "qty": "-3"}),
+        # prev-hl: 10:29am ET bar, high=106.0 >= stop 105.0 → stop hit
+        ("GET", "timeframe=1Min", {"bars": [{"h": 106.0, "l": 104.0, "c": 105.5, "t": "2026-06-24T14:29:00Z"}]}),
         ("POST", "/v2/orders", {"id": "cover-order-1", "status": "accepted"}),
     ],
     ["TEST", "3", "--env-file", str(TEST_ENV)],
@@ -320,6 +328,8 @@ run_case(
         ("GET", "/v2/clock", {"timestamp": "2026-06-24T11:00:00-04:00", "is_open": True}),
         ("GET", "/v2/calendar", [{"date": "2026-06-24", "open": "09:30", "close": "16:00"}]),
         ("GET", "/v2/positions/TEST", {"current_price": str(expected_target - 0.5), "qty": "-3"}),
+        # prev-hl: 10:59am ET bar, low=expected_target-0.5 <= target → target hit
+        ("GET", "timeframe=1Min", {"bars": [{"h": expected_target + 1.0, "l": expected_target - 0.5, "c": expected_target, "t": "2026-06-24T14:59:00Z"}]}),
         ("POST", "/v2/orders", {"id": "cover-order-2", "status": "accepted"}),
     ],
     ["TEST", "3", "--env-file", str(TEST_ENV)],

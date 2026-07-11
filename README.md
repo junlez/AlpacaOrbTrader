@@ -11,7 +11,8 @@ For a given symbol and trading day:
 2. **Entry**: once a subsequent 5-minute candle's *VWAP* (`vw`) crosses above the range high (long) or below the range low (short), it enters a position. The close price (`c`) is also supported via `--entry-field c`.
 3. **Stop-loss**: the opposite side of the opening range (range low for longs, range high for shorts).
 4. **Target**: 1.5x the initial risk (1.5R).
-5. **Time exit**: if neither stop nor target is hit, the position is closed 10 minutes before market close (3:50pm ET).
+5. **Exit detection**: each minute, the previous fully-closed 1-minute bar's high/low is checked against the stop and target (`--exit-mode prev-hl`, default). Checking the current live price from the position is also supported via `--exit-mode close`.
+6. **Time exit**: if neither stop nor target is hit, the position is closed 10 minutes before market close (3:50pm ET).
 
 Each invocation of `alpaca_orb.py` does one step of this process and persists its progress to `orb_state/<TICKER>.json`, so it's designed to be invoked repeatedly (e.g., once a minute) rather than run once as a long-lived process.
 
@@ -43,7 +44,7 @@ APCA_API_BASE_URL=https://api.alpaca.markets
 ## Usage
 
 ```
-python alpaca_orb.py SYMBOL [QTY] [--env-file ENV_FILE] [--entry-field vw|c]
+python alpaca_orb.py SYMBOL [QTY] [--env-file ENV_FILE] [--entry-field vw|c] [--exit-mode prev-hl|close]
 ```
 
 - `SYMBOL` — ticker to trade (required).
@@ -68,7 +69,7 @@ By default, bar data is fetched using Alpaca's free `iex` feed. If you have a pa
 
 - **`alpaca_orb_backtest.py`** — backtests the same ORB logic against historical bars for a given symbol and date range.
   ```
-  python alpaca_orb_backtest.py SYMBOL --start YYYY-MM-DD --end YYYY-MM-DD [--entry-timeframe 5Min|1Min] [--entry-field vw|c]
+  python alpaca_orb_backtest.py SYMBOL --start YYYY-MM-DD --end YYYY-MM-DD [--entry-timeframe 5Min|1Min] [--entry-field vw|c] [--exit-mode prev-hl|close]
   ```
 - **`alpaca_view.py`** — prints your account summary and open positions using `alpaca_PAPER.env`.
   ```

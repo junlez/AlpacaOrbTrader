@@ -183,10 +183,13 @@ def main():
                          help="path to the Alpaca credentials env file (default: alpaca_PAPER.env next to this script)")
     parser.add_argument("--entry-field", choices=["vw", "c"], default="vw",
                          help="bar field used for breakout signal: 'vw' (VWAP, default) or 'c' (close)")
+    parser.add_argument("--exit-mode", choices=["prev-hl", "close"], default="prev-hl",
+                         help="exit detection: 'prev-hl' (previous bar high/low, default) or 'close' (current price)")
     args = parser.parse_args()
     symbol = args.symbol.upper()
     trade_qty = args.qty
     entry_field = args.entry_field
+    exit_mode = args.exit_mode
     setup_logging(symbol)
 
     env = load_env(args.env_file)
@@ -276,15 +279,47 @@ def main():
             logging.info(f"[{symbol}] [{now.isoformat()}] Position already closed (no longer held).")
             return
 
-        current_price = float(position["current_price"])
         side = state["side"]
-        hit_stop = (side == "long" and current_price <= state["stop_price"]) or (
-            side == "short" and current_price >= state["stop_price"]
-        )
-        hit_target = (side == "long" and current_price >= state["target_price"]) or (
-            side == "short" and current_price <= state["target_price"]
-        )
         time_exit = now >= exit_cutoff_dt
+
+        if exit_mode == "prev-hl":
+            # Check the previous fully-closed 1-minute bar's high/low for stop/target,
+            # matching how the backtest simulates once-per-minute polling.
+            prev_bar_start = now.replace(second=0, microsecond=0) - timedelta(minutes=1)
+            prev_bars = get_bars(
+                headers, symbol, "1Min",
+                prev_bar_start.astimezone(timezone.utc).isoformat(),
+                prev_bar_start.astimezone(timezone.utc).isoformat(),
+                limit=1,
+            )
+            if prev_bars:
+                prev_bar = prev_bars[0]
+                bar_high, bar_low = prev_bar["h"], prev_bar["l"]
+                hit_stop = (side == "long" and bar_low <= state["stop_price"]) or (
+                    side == "short" and bar_high >= state["stop_price"]
+                )
+                hit_target = (side == "long" and bar_high >= state["target_price"]) or (
+                    side == "short" and bar_low <= state["target_price"]
+                )
+                logging.info(
+                    f"[{symbol}] [{now.isoformat()}] Holding {side}; prev_bar h={bar_high} l={bar_low} "
+                    f"(t={prev_bar['t']}), stop={state['stop_price']}, target={state['target_price']}."
+                )
+            else:
+                hit_stop = hit_target = False
+                logging.info(f"[{symbol}] [{now.isoformat()}] Holding {side}; no prev 1-min bar available, skipping exit check.")
+        else:
+            current_price = float(position["current_price"])
+            hit_stop = (side == "long" and current_price <= state["stop_price"]) or (
+                side == "short" and current_price >= state["stop_price"]
+            )
+            hit_target = (side == "long" and current_price >= state["target_price"]) or (
+                side == "short" and current_price <= state["target_price"]
+            )
+            logging.info(
+                f"[{symbol}] [{now.isoformat()}] Holding {side}; price={current_price}, "
+                f"stop={state['stop_price']}, target={state['target_price']}."
+            )
 
         if hit_stop or hit_target or time_exit:
             reason = "stop" if hit_stop else "target" if hit_target else "time"
@@ -299,12 +334,7 @@ def main():
             state["exit_reason"] = reason
             state["exit_time"] = now.isoformat()
             save_state(symbol, date_str, state)
-            logging.info(f"[{symbol}] [{now.isoformat()}] Closed {side} position near {current_price} due to {reason}.")
-        else:
-            logging.info(
-                f"[{symbol}] [{now.isoformat()}] Holding {side}; price={current_price}, "
-                f"stop={state['stop_price']}, target={state['target_price']}."
-            )
+            logging.info(f"[{symbol}] [{now.isoformat()}] Exiting {side} position due to {reason}.")
         return
 
     # Step 3: not yet entered. Stop looking once we're past the exit-by-close window.
@@ -327,10 +357,9 @@ def main():
         logging.info(f"[{symbol}] [{now.isoformat()}] No completed 5-minute candle yet since the opening range ended.")
         return
 
-    # Alpaca's bars "end" filter is inclusive on a bar's start time (t <= end), so
-    # passing the boundary itself would also match the bar that just started forming
-    # at that exact instant. Step back 1 second to exclude it and only match bars
-    # that are genuinely already closed.
+    # last_closed_boundary is already one full candle (5 min) behind the current
+    # forming bar, so passing it as "end" (inclusive on bar start time) matches
+    # only bars that are genuinely already closed.
     bars = get_bars(
         headers, symbol, "5Min",
         range_end_dt.astimezone(timezone.utc).isoformat(),
