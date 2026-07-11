@@ -8,7 +8,7 @@ A minute-by-minute Opening Range Breakout (ORB) trading bot for [Alpaca](https:/
 
 For a given symbol and trading day:
 1. **Opening range**: the high/low of the first 15 minutes of regular trading (9:30–9:45am ET) defines the range.
-2. **Entry**: once a subsequent 5-minute candle *closes* above the range high (long) or below the range low (short), it enters a position.
+2. **Entry**: once a subsequent 5-minute candle's *VWAP* (`vw`) crosses above the range high (long) or below the range low (short), it enters a position. The close price (`c`) is also supported via `--entry-field c`.
 3. **Stop-loss**: the opposite side of the opening range (range low for longs, range high for shorts).
 4. **Target**: 1.5x the initial risk (1.5R).
 5. **Time exit**: if neither stop nor target is hit, the position is closed 10 minutes before market close (3:50pm ET).
@@ -43,7 +43,7 @@ APCA_API_BASE_URL=https://api.alpaca.markets
 ## Usage
 
 ```
-python alpaca_orb.py SYMBOL [QTY] [--env-file ENV_FILE]
+python alpaca_orb.py SYMBOL [QTY] [--env-file ENV_FILE] [--entry-field vw|c]
 ```
 
 - `SYMBOL` — ticker to trade (required).
@@ -68,7 +68,7 @@ By default, bar data is fetched using Alpaca's free `iex` feed. If you have a pa
 
 - **`alpaca_orb_backtest.py`** — backtests the same ORB logic against historical bars for a given symbol and date range.
   ```
-  python alpaca_orb_backtest.py SYMBOL --start YYYY-MM-DD --end YYYY-MM-DD [--entry-timeframe 5Min|1Min]
+  python alpaca_orb_backtest.py SYMBOL --start YYYY-MM-DD --end YYYY-MM-DD [--entry-timeframe 5Min|1Min] [--entry-field vw|c]
   ```
 - **`alpaca_view.py`** — prints your account summary and open positions using `alpaca_PAPER.env`.
   ```
@@ -78,3 +78,7 @@ By default, bar data is fetched using Alpaca's free `iex` feed. If you have a pa
   ```
   python test_alpaca_orb.py
   ```
+
+## Acknowledgements
+
+This project was designed and built in collaboration with [Claude](https://claude.ai) (Anthropic), which assisted with strategy implementation, backtesting, bug fixing, and code review throughout development.
