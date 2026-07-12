@@ -12,6 +12,7 @@ Usage: python3 alpaca_orb_backtest.py TSLA [--days 30]
 """
 import sys
 import json
+import bisect
 import argparse
 import urllib.request
 import urllib.parse
@@ -23,11 +24,13 @@ from zoneinfo import ZoneInfo
 ET = ZoneInfo("America/New_York")
 SCRIPT_DIR = Path(__file__).parent
 DATA_BASE = "https://data.alpaca.markets"
+DEFAULT_CACHE_DIR = SCRIPT_DIR / "bar_cache"
 
 OPENING_RANGE_MINUTES = 15
 EXIT_BUFFER_MINUTES = 10
-TARGET_R = 1.5
 TRADE_QTY = 1
+DEFAULT_STOP_PCT = 75.0
+DEFAULT_REWARD_PCT = 175.0
 
 
 def load_env(path):
@@ -55,7 +58,36 @@ def get_calendar(trade_base, headers, start_date, end_date):
     return api_request("GET", url, headers)
 
 
-def get_all_bars(headers, symbol, timeframe, start, end):
+def get_all_bars(headers, symbol, timeframe, start, end, cache_dir=None):
+    # If a cache directory is given, try to load from pre-downloaded files first.
+    # Falls back to the API for any year not found in the cache.
+    if cache_dir is not None:
+        start_dt = datetime.fromisoformat(start)
+        end_dt = datetime.fromisoformat(end)
+        years = range(start_dt.year, end_dt.year + 1)
+        bars = []
+        missing_years = []
+        for year in years:
+            cache_file = Path(cache_dir) / f"{symbol}_{timeframe}_{year}.json"
+            if cache_file.exists():
+                year_bars = json.loads(cache_file.read_text())
+                # Filter to the requested window (file covers the full year)
+                bars.extend(
+                    b for b in year_bars
+                    if start <= b["t"].replace("Z", "+00:00") < end
+                       or start <= b["t"] < end
+                )
+            else:
+                missing_years.append(year)
+        if missing_years:
+            print(f"  [cache miss] {symbol} {timeframe} {missing_years} — fetching from API")
+            for year in missing_years:
+                y_start = f"{year}-01-01T00:00:00+00:00"
+                y_end = f"{year + 1}-01-01T00:00:00+00:00"
+                bars.extend(get_all_bars(headers, symbol, timeframe, y_start, y_end))
+            bars.sort(key=lambda b: b["t"])
+        return bars
+
     bars = []
     page_token = None
     while True:
@@ -78,29 +110,39 @@ def get_all_bars(headers, symbol, timeframe, start, end):
     return bars
 
 
-def bars_between(bars, start_dt, end_dt):
-    out = []
-    for b in bars:
-        t = datetime.fromisoformat(b["t"].replace("Z", "+00:00"))
-        if start_dt <= t < end_dt:
-            out.append((t, b))
-    return out
+def build_index(bars):
+    """Pre-parse timestamps into parallel (keys, bars) arrays for O(log n) slicing."""
+    pairs = sorted(
+        ((datetime.fromisoformat(b["t"].replace("Z", "+00:00")), b) for b in bars),
+        key=lambda x: x[0],
+    )
+    keys = [p[0] for p in pairs]
+    vals = [p[1] for p in pairs]
+    return keys, vals
 
 
-def simulate_day(symbol, day, calendar_day, bars_15m, bars_entry, bars_1m, entry_field="vw", exit_mode="prev-hl"):
+def bars_between(index, start_dt, end_dt):
+    """O(log n) slice of a pre-built bar index between [start_dt, end_dt)."""
+    keys, vals = index
+    lo = bisect.bisect_left(keys, start_dt)
+    hi = bisect.bisect_left(keys, end_dt)
+    return list(zip(keys[lo:hi], vals[lo:hi]))
+
+
+def simulate_day(symbol, day, calendar_day, idx_15m, idx_entry, idx_1m, entry_field="vw", exit_mode="prev-hl", stop_pct=DEFAULT_STOP_PCT, reward_pct=DEFAULT_REWARD_PCT):
     date_str = day
     open_dt = datetime.strptime(f"{date_str} {calendar_day['open']}", "%Y-%m-%d %H:%M").replace(tzinfo=ET)
     close_dt = datetime.strptime(f"{date_str} {calendar_day['close']}", "%Y-%m-%d %H:%M").replace(tzinfo=ET)
     range_end_dt = open_dt + timedelta(minutes=OPENING_RANGE_MINUTES)
     exit_cutoff_dt = close_dt - timedelta(minutes=EXIT_BUFFER_MINUTES)
 
-    range_bar = bars_between(bars_15m, open_dt.astimezone(timezone.utc), range_end_dt.astimezone(timezone.utc))
+    range_bar = bars_between(idx_15m, open_dt.astimezone(timezone.utc), range_end_dt.astimezone(timezone.utc))
     if not range_bar:
         return {"date": date_str, "skipped": "no_opening_range_data"}
     range_high = range_bar[0][1]["h"]
     range_low = range_bar[0][1]["l"]
 
-    entry_candles = bars_between(bars_entry, range_end_dt.astimezone(timezone.utc), exit_cutoff_dt.astimezone(timezone.utc))
+    entry_candles = bars_between(idx_entry, range_end_dt.astimezone(timezone.utc), exit_cutoff_dt.astimezone(timezone.utc))
 
     entry = None
     for t, b in entry_candles:
@@ -123,19 +165,21 @@ def simulate_day(symbol, day, calendar_day, bars_15m, bars_entry, bars_1m, entry
     # at the open of the next 1-minute bar, which is the first price available
     # after the signal. Fall back to the signal price if the bar is missing.
     fill_time = entry["time"] + timedelta(minutes=5)
-    fill_bars = bars_between(bars_1m, fill_time, fill_time + timedelta(minutes=1))
+    fill_bars = bars_between(idx_1m, fill_time, fill_time + timedelta(minutes=1))
     entry_price = fill_bars[0][1]["o"] if fill_bars else entry["price"]
 
-    if side == "long":
-        stop_price = range_low
-        risk = entry_price - stop_price
-        target_price = entry_price + TARGET_R * risk
-    else:
-        stop_price = range_high
-        risk = stop_price - entry_price
-        target_price = entry_price - TARGET_R * risk
+    range_size = range_high - range_low
+    stop_distance = (stop_pct / 100.0) * range_size
+    reward_distance = (reward_pct / 100.0) * range_size
 
-    one_min = bars_between(bars_1m, fill_time, close_dt.astimezone(timezone.utc))
+    if side == "long":
+        stop_price = range_high - stop_distance
+        target_price = range_high + reward_distance
+    else:
+        stop_price = range_low + stop_distance
+        target_price = range_low - reward_distance
+
+    one_min = bars_between(idx_1m, fill_time, close_dt.astimezone(timezone.utc))
 
     exit_price = None
     exit_reason = None
@@ -211,6 +255,14 @@ def main():
                          help="bar field used for breakout signal: 'vw' (VWAP, default) or 'c' (close)")
     parser.add_argument("--exit-mode", choices=["prev-hl", "close"], default="prev-hl",
                          help="exit detection: 'prev-hl' (previous bar high/low, default) or 'close' (current bar close)")
+    parser.add_argument("--stop-pct", type=float, default=DEFAULT_STOP_PCT,
+                         help="stop distance as %% of opening range size (default: 100)")
+    parser.add_argument("--reward-pct", type=float, default=DEFAULT_REWARD_PCT,
+                         help="reward distance as %% of opening range size (default: 150)")
+    parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR,
+                         help="directory of pre-downloaded bar files from download_bars.py (default: bar_cache/)")
+    parser.add_argument("--no-cache", action="store_true",
+                         help="ignore local cache and always fetch from Alpaca API")
     args = parser.parse_args()
     symbol = args.symbol.upper()
 
@@ -239,18 +291,25 @@ def main():
     range_start_utc = datetime.combine(start_date, datetime.min.time(), tzinfo=ET).astimezone(timezone.utc).isoformat()
     range_end_utc = datetime.combine(end_date + timedelta(days=1), datetime.min.time(), tzinfo=ET).astimezone(timezone.utc).isoformat()
 
-    print(f"Fetching {symbol} bars from {start_date} to {end_date} (entry timeframe: {args.entry_timeframe})...")
-    bars_15m = get_all_bars(headers, symbol, "15Min", range_start_utc, range_end_utc)
-    bars_1m = get_all_bars(headers, symbol, "1Min", range_start_utc, range_end_utc)
+    cache_dir = None if args.no_cache else (args.cache_dir if args.cache_dir.exists() else None)
+    source = "cache" if cache_dir else "API"
+    print(f"Fetching {symbol} bars from {start_date} to {end_date} (entry timeframe: {args.entry_timeframe}, source: {source})...")
+    bars_15m = get_all_bars(headers, symbol, "15Min", range_start_utc, range_end_utc, cache_dir=cache_dir)
+    bars_1m = get_all_bars(headers, symbol, "1Min", range_start_utc, range_end_utc, cache_dir=cache_dir)
     if args.entry_timeframe == "1Min":
         bars_entry = bars_1m
     else:
-        bars_entry = get_all_bars(headers, symbol, "5Min", range_start_utc, range_end_utc)
-    print(f"Got {len(bars_15m)} 15-min bars, {len(bars_entry)} entry-timeframe bars, {len(bars_1m)} 1-min bars.\n")
+        bars_entry = get_all_bars(headers, symbol, "5Min", range_start_utc, range_end_utc, cache_dir=cache_dir)
+    print(f"Got {len(bars_15m)} 15-min bars, {len(bars_entry)} entry-timeframe bars, {len(bars_1m)} 1-min bars.")
+    print("Building bar indexes...", end=" ", flush=True)
+    idx_15m = build_index(bars_15m)
+    idx_entry = build_index(bars_entry)
+    idx_1m = build_index(bars_1m)
+    print("done.\n")
 
     results = []
     for date_str in sorted(trading_days):
-        res = simulate_day(symbol, date_str, trading_days[date_str], bars_15m, bars_entry, bars_1m, entry_field=args.entry_field, exit_mode=args.exit_mode)
+        res = simulate_day(symbol, date_str, trading_days[date_str], idx_15m, idx_entry, idx_1m, entry_field=args.entry_field, exit_mode=args.exit_mode, stop_pct=args.stop_pct, reward_pct=args.reward_pct)
         results.append(res)
 
     print(f"{'Date':<12}{'Side':<7}{'Entry':<10}{'Exit':<10}{'Reason':<8}{'PnL':>10}{'PnL%':>9}")

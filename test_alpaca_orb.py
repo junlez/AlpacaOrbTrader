@@ -277,20 +277,23 @@ run_case(
 )
 short_entry_state = json.loads(state_file.read_text())["2026-06-24"]
 print("Saved state after short entry:", short_entry_state)
-# stop should be the range high (105.0), target should be below entry (1.5R to the downside)
+# stop = range_low + 75% of range_size; target = range_low - 175% of range_size
 assert short_entry_state["side"] == "short"
-assert short_entry_state["stop_price"] == 105.0
+range_size = 105.0 - 95.0  # 10.0
+range_low_val = 95.0
+expected_stop = range_low_val + 0.75 * range_size   # 102.5
+expected_target = range_low_val - 1.75 * range_size  # 77.5
+assert abs(short_entry_state["stop_price"] - expected_stop) < 1e-9, short_entry_state["stop_price"]
 assert short_entry_state["entry_price"] == 91.0  # vw of the breakout bar
-expected_target = 91.0 - 1.5 * (105.0 - 91.0)   # 1.5R below vw entry
 assert abs(short_entry_state["target_price"] - expected_target) < 1e-9, short_entry_state["target_price"]
 assert short_entry_state["qty"] == 3
 
-# --- Case 12: holding short, stop hit (price rises back above range high) ---
+# --- Case 12: holding short, stop hit (price rises back above stop) ---
 state_file = write_state({
     "date": "2026-06-24", "range_high": 105.0, "range_low": 95.0, "range_set": True,
     "range_set_time": "2026-06-24T09:50:00-04:00", "entered": True, "side": "short",
     "entry_price": 91.0, "entry_time": "2026-06-24T09:55:00-04:00",
-    "stop_price": 105.0, "target_price": expected_target, "qty": 3,
+    "stop_price": expected_stop, "target_price": expected_target, "qty": 3,
     "exited": False, "exit_reason": None, "exit_time": None,
 })
 requests = run_case(
@@ -298,9 +301,9 @@ requests = run_case(
     [
         ("GET", "/v2/clock", {"timestamp": "2026-06-24T10:30:00-04:00", "is_open": True}),
         ("GET", "/v2/calendar", [{"date": "2026-06-24", "open": "09:30", "close": "16:00"}]),
-        ("GET", "/v2/positions/TEST", {"current_price": "106.0", "qty": "-3"}),
-        # prev-hl: 10:29am ET bar, high=106.0 >= stop 105.0 → stop hit
-        ("GET", "timeframe=1Min", {"bars": [{"h": 106.0, "l": 104.0, "c": 105.5, "t": "2026-06-24T14:29:00Z"}]}),
+        ("GET", "/v2/positions/TEST", {"current_price": "103.0", "qty": "-3"}),
+        # prev-hl: 10:29am ET bar, high=103.0 >= stop 102.5 → stop hit
+        ("GET", "timeframe=1Min", {"bars": [{"h": 103.0, "l": 101.0, "c": 102.5, "t": "2026-06-24T14:29:00Z"}]}),
         ("POST", "/v2/orders", {"id": "cover-order-1", "status": "accepted"}),
     ],
     ["TEST", "3", "--env-file", str(TEST_ENV)],
@@ -319,7 +322,7 @@ state_file = write_state({
     "date": "2026-06-24", "range_high": 105.0, "range_low": 95.0, "range_set": True,
     "range_set_time": "2026-06-24T09:50:00-04:00", "entered": True, "side": "short",
     "entry_price": 91.0, "entry_time": "2026-06-24T09:55:00-04:00",
-    "stop_price": 105.0, "target_price": expected_target, "qty": 3,
+    "stop_price": expected_stop, "target_price": expected_target, "qty": 3,
     "exited": False, "exit_reason": None, "exit_time": None,
 })
 run_case(

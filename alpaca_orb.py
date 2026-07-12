@@ -28,8 +28,9 @@ DATA_BASE = "https://data.alpaca.markets"
 
 OPENING_RANGE_MINUTES = 15
 EXIT_BUFFER_MINUTES = 10
-TARGET_R = 1.5
 DEFAULT_TRADE_QTY = 1
+DEFAULT_STOP_PCT = 75.0    # stop distance as % of opening range size
+DEFAULT_REWARD_PCT = 175.0 # target distance as % of opening range size
 CLOCK_SYNC_POLL_INTERVAL_SECONDS = 0.1
 CLOCK_SYNC_MAX_WAIT_SECONDS = 10.0
 
@@ -185,11 +186,17 @@ def main():
                          help="bar field used for breakout signal: 'vw' (VWAP, default) or 'c' (close)")
     parser.add_argument("--exit-mode", choices=["prev-hl", "close"], default="prev-hl",
                          help="exit detection: 'prev-hl' (previous bar high/low, default) or 'close' (current price)")
+    parser.add_argument("--stop-pct", type=float, default=DEFAULT_STOP_PCT,
+                         help=f"stop distance as %% of opening range size (default: {DEFAULT_STOP_PCT})")
+    parser.add_argument("--reward-pct", type=float, default=DEFAULT_REWARD_PCT,
+                         help=f"target distance as %% of opening range size (default: {DEFAULT_REWARD_PCT})")
     args = parser.parse_args()
     symbol = args.symbol.upper()
     trade_qty = args.qty
     entry_field = args.entry_field
     exit_mode = args.exit_mode
+    stop_pct = args.stop_pct
+    reward_pct = args.reward_pct
     setup_logging(symbol)
 
     env = load_env(args.env_file)
@@ -396,20 +403,22 @@ def main():
         )
         return
 
+    range_size = range_high - range_low
+    stop_distance = (stop_pct / 100.0) * range_size
+    reward_distance = (reward_pct / 100.0) * range_size
+
     try:
         if side == "long":
-            stop_price = range_low
-            risk = signal_price - stop_price
-            target_price = signal_price + TARGET_R * risk
+            stop_price = range_high - stop_distance
+            target_price = range_high + reward_distance
             order = submit_order(
                 trade_base, headers,
                 symbol=symbol, side="buy", type="market",
                 time_in_force="day", qty=str(trade_qty),
             )
         else:
-            stop_price = range_high
-            risk = stop_price - signal_price
-            target_price = signal_price - TARGET_R * risk
+            stop_price = range_low + stop_distance
+            target_price = range_low - reward_distance
             order = submit_order(
                 trade_base, headers,
                 symbol=symbol, side="sell", type="market",
@@ -429,9 +438,12 @@ def main():
     state["target_price"] = target_price
     state["order_id"] = order.get("id")
     save_state(symbol, date_str, state)
+    anchor = range_high if side == "long" else range_low
     logging.info(
-        f"[{symbol}] [{now.isoformat()}] Entered {side} @ ~{signal_price} ({entry_field}). stop={stop_price} target={target_price} "
-        f"(risk={risk:.4f}, R={TARGET_R}). order_id={order.get('id')} (bar timestamp={latest['t']})"
+        f"[{symbol}] [{now.isoformat()}] Entered {side} @ ~{signal_price} ({entry_field}). "
+        f"anchor={anchor:.4f} stop={stop_price:.4f} (anchor-{stop_pct}%*range) "
+        f"target={target_price:.4f} (anchor+{reward_pct}%*range) "
+        f"range_size={range_size:.4f}. order_id={order.get('id')} (bar timestamp={latest['t']})"
     )
 
 
