@@ -117,7 +117,7 @@ run_case(
         ("GET", "timeframe=15Min", {"bars": [{"h": 105.0, "l": 95.0, "c": 100.0, "vw": 100.0, "t": "2026-06-24T13:30:00Z"}]}),
         ("GET", "timeframe=5Min", {"bars": [{"h": 102.0, "l": 98.0, "c": 100.0, "vw": 100.0, "t": "2026-06-24T13:45:00Z"}]}),
     ],
-    ["TEST", "1", "--env-file", str(TEST_ENV)],
+    ["TEST", "1", "--env-file", str(TEST_ENV), "--entry-timeframe", "5Min"],
 )
 
 # --- Case 4: long breakout entry ---
@@ -135,7 +135,7 @@ run_case(
         ("GET", "/v2/stocks/TEST/bars", {"bars": [{"h": 110.0, "l": 108.0, "c": 109.0, "vw": 109.0, "t": "2026-06-24T13:50:00Z"}]}),
         ("POST", "/v2/orders", {"id": "order-123", "status": "accepted"}),
     ],
-    ["TEST", "3", "--env-file", str(TEST_ENV)],
+    ["TEST", "3", "--env-file", str(TEST_ENV), "--entry-timeframe", "5Min"],
 )
 print("Saved state after entry:", json.loads(state_file.read_text())["2026-06-24"])
 
@@ -254,7 +254,7 @@ run_case(
         ("GET", "/v2/stocks/TEST/bars", {"bars": [{"h": 92.0, "l": 90.0, "c": 91.0, "vw": 91.0, "t": "2026-06-24T13:50:00Z"}]}),
         ("POST", "/v2/orders", orb.urllib.error.HTTPError("url", 403, "Forbidden", {}, io.BytesIO(b'{"message":"asset not shortable"}'))),
     ],
-    ["TEST", "3", "--env-file", str(TEST_ENV)],
+    ["TEST", "3", "--env-file", str(TEST_ENV), "--entry-timeframe", "5Min"],
 )
 print("Saved state after rejected order:", json.loads(state_file.read_text())["2026-06-24"])
 
@@ -273,7 +273,7 @@ run_case(
         ("GET", "/v2/stocks/TEST/bars", {"bars": [{"h": 92.0, "l": 90.0, "c": 91.0, "vw": 91.0, "t": "2026-06-24T13:50:00Z"}]}),
         ("POST", "/v2/orders", {"id": "short-order-1", "status": "accepted"}),
     ],
-    ["TEST", "3", "--env-file", str(TEST_ENV)],
+    ["TEST", "3", "--env-file", str(TEST_ENV), "--entry-timeframe", "5Min"],
 )
 short_entry_state = json.loads(state_file.read_text())["2026-06-24"]
 print("Saved state after short entry:", short_entry_state)
@@ -361,7 +361,7 @@ requests = run_case(
         # Only the fully-closed 09:45-09:50 candle should ever be requested/used.
         ("GET", "/v2/stocks/TEST/bars", {"bars": [{"h": 100.0, "l": 98.0, "c": 99.0, "vw": 99.0, "t": "2026-06-24T13:45:00Z"}]}),
     ],
-    ["TEST", "3", "--env-file", str(TEST_ENV)],
+    ["TEST", "3", "--env-file", str(TEST_ENV), "--entry-timeframe", "5Min"],
 )
 mid_candle_state = json.loads(state_file.read_text())["2026-06-24"]
 print("Saved state after mid-candle poll:", mid_candle_state)

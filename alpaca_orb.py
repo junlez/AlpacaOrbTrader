@@ -182,6 +182,8 @@ def main():
                          help=f"shares to trade per day (default: {DEFAULT_TRADE_QTY})")
     parser.add_argument("--env-file", type=Path, default=SCRIPT_DIR / "alpaca_PAPER.env",
                          help="path to the Alpaca credentials env file (default: alpaca_PAPER.env next to this script)")
+    parser.add_argument("--entry-timeframe", default="10Min",
+                         help="candle resolution used for the entry/breakout signal (e.g. 1Min, 2Min, 3Min, 4Min, 5Min, 10Min; default: 10Min)")
     parser.add_argument("--entry-field", choices=["vw", "c"], default="vw",
                          help="bar field used for breakout signal: 'vw' (VWAP, default) or 'c' (close)")
     parser.add_argument("--exit-mode", choices=["prev-hl", "close"], default="prev-hl",
@@ -193,6 +195,8 @@ def main():
     args = parser.parse_args()
     symbol = args.symbol.upper()
     trade_qty = args.qty
+    entry_timeframe = args.entry_timeframe
+    entry_tf_minutes = int(entry_timeframe.replace("Min", ""))
     entry_field = args.entry_field
     exit_mode = args.exit_mode
     stop_pct = args.stop_pct
@@ -270,9 +274,8 @@ def main():
             f"[{symbol}] [{now.isoformat()}] Opening range set: high={state['range_high']} low={state['range_low']} "
             f"(bar timestamp={bar['t']})"
         )
-        # No 5-minute candle can have closed yet at this exact instant (the
-        # earliest one closes 5 minutes from now), so checking for a breakout
-        # this same run would always be a guaranteed no-op. Wait for next run.
+        # No entry candle can have closed yet at this exact instant, so
+        # checking for a breakout this same run would be a no-op. Wait for next run.
         return
 
     # Step 2: if already in a position, manage stop / target / time exit.
@@ -353,36 +356,35 @@ def main():
         save_state(symbol, date_str, state)
         return
 
-    # Only evaluate fully-closed 5-minute candles (matches how the backtest sees
-    # historical bars, which are always already-finalized). Clamp the query window
-    # to the most recent 5-minute boundary so an in-progress candle's live-updating
-    # close never gets treated as a breakout signal.
+    # Only evaluate fully-closed entry candles. Clamp the query window to the most
+    # recent candle boundary so an in-progress candle's live-updating close never
+    # gets treated as a breakout signal.
     last_closed_boundary = now.replace(second=0, microsecond=0)
-    last_closed_boundary -= timedelta(minutes=last_closed_boundary.minute % 5)
-    last_closed_boundary -= timedelta(minutes=5)
+    last_closed_boundary -= timedelta(minutes=last_closed_boundary.minute % entry_tf_minutes)
+    last_closed_boundary -= timedelta(minutes=entry_tf_minutes)
     if last_closed_boundary < range_end_dt:
-        logging.info(f"[{symbol}] [{now.isoformat()}] No completed 5-minute candle yet since the opening range ended.")
+        logging.info(f"[{symbol}] [{now.isoformat()}] No completed {entry_timeframe} candle yet since the opening range ended.")
         return
 
-    # last_closed_boundary is already one full candle (5 min) behind the current
-    # forming bar, so passing it as "end" (inclusive on bar start time) matches
-    # only bars that are genuinely already closed.
+    # last_closed_boundary is already one full candle behind the current forming
+    # bar, so passing it as "end" (inclusive on bar start time) matches only bars
+    # that are genuinely already closed.
     bars = get_bars(
-        headers, symbol, "5Min",
+        headers, symbol, entry_timeframe,
         range_end_dt.astimezone(timezone.utc).isoformat(),
         last_closed_boundary.astimezone(timezone.utc).isoformat(),
         limit=1,
         sort="desc",
     )
     if not bars:
-        logging.info(f"[{symbol}] [{now.isoformat()}] No 5-minute candle data yet.")
+        logging.info(f"[{symbol}] [{now.isoformat()}] No {entry_timeframe} candle data yet.")
         return
 
     latest = bars[0]
     expected_bar_start = last_closed_boundary.astimezone(timezone.utc)
     if bar_start_time(latest) != expected_bar_start:
         logging.info(
-            f"[{symbol}] [{now.isoformat()}] Latest 5-minute candle timestamp mismatch "
+            f"[{symbol}] [{now.isoformat()}] Latest {entry_timeframe} candle timestamp mismatch "
             f"(got {bar_start_time(latest).isoformat()}, expected {expected_bar_start.isoformat()}); "
             f"feed may be missing data for this interval, skipping this run."
         )

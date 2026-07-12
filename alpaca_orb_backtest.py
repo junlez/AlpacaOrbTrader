@@ -129,7 +129,17 @@ def bars_between(index, start_dt, end_dt):
     return list(zip(keys[lo:hi], vals[lo:hi]))
 
 
-def simulate_day(symbol, day, calendar_day, idx_15m, idx_entry, idx_1m, entry_field="vw", exit_mode="prev-hl", stop_pct=DEFAULT_STOP_PCT, reward_pct=DEFAULT_REWARD_PCT):
+def parse_timeframe_minutes(tf):
+    """Convert an Alpaca timeframe string like '5Min' or '10Min' to integer minutes."""
+    tf = tf.strip()
+    if tf.endswith("Min"):
+        return int(tf[:-3])
+    if tf.endswith("Hour"):
+        return int(tf[:-4]) * 60
+    raise ValueError(f"Unsupported timeframe: {tf}")
+
+
+def simulate_day(symbol, day, calendar_day, idx_15m, idx_entry, idx_1m, entry_field="vw", exit_mode="prev-hl", stop_pct=DEFAULT_STOP_PCT, reward_pct=DEFAULT_REWARD_PCT, entry_timeframe="10Min"):
     date_str = day
     open_dt = datetime.strptime(f"{date_str} {calendar_day['open']}", "%Y-%m-%d %H:%M").replace(tzinfo=ET)
     close_dt = datetime.strptime(f"{date_str} {calendar_day['close']}", "%Y-%m-%d %H:%M").replace(tzinfo=ET)
@@ -161,10 +171,11 @@ def simulate_day(symbol, day, calendar_day, idx_15m, idx_entry, idx_1m, entry_fi
         }
 
     side = entry["side"]
-    # The breakout candle closes at entry["time"] + 5min. The market order fills
-    # at the open of the next 1-minute bar, which is the first price available
-    # after the signal. Fall back to the signal price if the bar is missing.
-    fill_time = entry["time"] + timedelta(minutes=5)
+    # The breakout candle closes at entry["time"] + entry_timeframe duration.
+    # The market order fills at the open of the next 1-minute bar, which is the
+    # first price available after the signal. Fall back to the signal price if missing.
+    tf_minutes = parse_timeframe_minutes(entry_timeframe)
+    fill_time = entry["time"] + timedelta(minutes=tf_minutes)
     fill_bars = bars_between(idx_1m, fill_time, fill_time + timedelta(minutes=1))
     entry_price = fill_bars[0][1]["o"] if fill_bars else entry["price"]
 
@@ -249,8 +260,8 @@ def main():
     parser.add_argument("--days", type=int, default=30, help="lookback window if --start/--end not given")
     parser.add_argument("--start", type=str, default=None, help="YYYY-MM-DD")
     parser.add_argument("--end", type=str, default=None, help="YYYY-MM-DD")
-    parser.add_argument("--entry-timeframe", choices=["5Min", "1Min"], default="5Min",
-                         help="candle resolution used for the entry/breakout signal")
+    parser.add_argument("--entry-timeframe", default="10Min",
+                         help="candle resolution used for the entry/breakout signal (e.g. 1Min, 2Min, 3Min, 4Min, 5Min, 10Min)")
     parser.add_argument("--entry-field", choices=["vw", "c"], default="vw",
                          help="bar field used for breakout signal: 'vw' (VWAP, default) or 'c' (close)")
     parser.add_argument("--exit-mode", choices=["prev-hl", "close"], default="prev-hl",
@@ -299,7 +310,7 @@ def main():
     if args.entry_timeframe == "1Min":
         bars_entry = bars_1m
     else:
-        bars_entry = get_all_bars(headers, symbol, "5Min", range_start_utc, range_end_utc, cache_dir=cache_dir)
+        bars_entry = get_all_bars(headers, symbol, args.entry_timeframe, range_start_utc, range_end_utc, cache_dir=cache_dir)
     print(f"Got {len(bars_15m)} 15-min bars, {len(bars_entry)} entry-timeframe bars, {len(bars_1m)} 1-min bars.")
     print("Building bar indexes...", end=" ", flush=True)
     idx_15m = build_index(bars_15m)
@@ -309,7 +320,7 @@ def main():
 
     results = []
     for date_str in sorted(trading_days):
-        res = simulate_day(symbol, date_str, trading_days[date_str], idx_15m, idx_entry, idx_1m, entry_field=args.entry_field, exit_mode=args.exit_mode, stop_pct=args.stop_pct, reward_pct=args.reward_pct)
+        res = simulate_day(symbol, date_str, trading_days[date_str], idx_15m, idx_entry, idx_1m, entry_field=args.entry_field, exit_mode=args.exit_mode, stop_pct=args.stop_pct, reward_pct=args.reward_pct, entry_timeframe=args.entry_timeframe)
         results.append(res)
 
     print(f"{'Date':<12}{'Side':<7}{'Entry':<10}{'Exit':<10}{'Reason':<8}{'PnL':>10}{'PnL%':>9}")
