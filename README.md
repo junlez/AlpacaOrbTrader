@@ -69,7 +69,7 @@ By default, bar data is fetched using Alpaca's free `iex` feed. If you have a pa
 
 - **`alpaca_orb_backtest.py`** — backtests the same ORB logic against historical bars for a given symbol and date range.
   ```
-  python alpaca_orb_backtest.py SYMBOL --start YYYY-MM-DD --end YYYY-MM-DD [--entry-timeframe 10Min] [--entry-field vw|c] [--exit-mode prev-hl|close] [--stop-pct N] [--reward-pct N] [--cache-dir DIR]
+  python alpaca_orb_backtest.py SYMBOL --start YYYY-MM-DD --end YYYY-MM-DD [--entry-timeframe 10Min] [--entry-field vw|c] [--exit-mode prev-hl|close] [--stop-pct N] [--reward-pct N] [--cache-dir DIR] [--verbose]
   ```
 - **`download_bars.py`** — downloads historical bar data (15Min, 5Min, 1Min) from Alpaca and saves to a local `bar_cache/` directory. Run this once to enable fast offline backtesting (~95% faster per run). Re-run with `--overwrite` to refresh data.
   ```

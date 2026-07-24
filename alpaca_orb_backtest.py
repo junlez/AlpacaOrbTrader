@@ -274,6 +274,8 @@ def main():
                          help="directory of pre-downloaded bar files from download_bars.py (default: bar_cache/)")
     parser.add_argument("--no-cache", action="store_true",
                          help="ignore local cache and always fetch from Alpaca API")
+    parser.add_argument("--verbose", action="store_true",
+                         help="print entry/exit times alongside prices")
     args = parser.parse_args()
     symbol = args.symbol.upper()
 
@@ -348,6 +350,8 @@ def main():
             f"{r['date']:<12}{r['side']:<7}{r['entry_price']:<10.2f}{r['exit_price']:<10.2f}"
             f"{r['exit_reason']:<8}{pnl:>10.2f}{pnl_pct:>8.2f}%"
         )
+        if args.verbose:
+            print(f"  entry_time={r['entry_time']}  exit_time={r['exit_time']}")
 
     traded = wins + losses
     print("\n=== Summary ===")
